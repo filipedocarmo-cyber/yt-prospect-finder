@@ -1,27 +1,19 @@
 
 """
-YT Prospect Finder — Canais Pequenos com Vídeos Virais
------------------------------------------------------
-App Streamlit para encontrar canais com até X inscritos que possuem vídeos
-acima de um certo número de views (100k/200k/500k+), em qualquer idioma/país.
+YT Prospect Finder — Canais Pequenos com Vídeos Virais (Streamlit)
+-----------------------------------------------------------------
+App para encontrar **canais pequenos (≤ X inscritos)** que têm **vídeos virais** (100k/200k/500k/1M+).
+Compatível com Python 3.12+ e Streamlit Cloud.
 
-Como executar:
-1) Crie um ambiente e instale as dependências:
-   pip install streamlit google-api-python-client pandas python-dateutil
-2) Rode o app:
-   streamlit run app.py
+Como rodar localmente (resumo):
+  pip install -r requirements.txt
+  python -m streamlit run app.py
 
-Observação: você precisa de uma API Key do YouTube Data API v3.
-Crie em: https://console.cloud.google.com/apis/credentials
-Ative a API "YouTube Data API v3" no seu projeto.
-
+Repositório/Cloud: basta ter `app.py` e `requirements.txt`.
 """
 
-import math
-import time
 from datetime import datetime, timedelta
-from dateutil import parser as dateparser
-from typing import List, Dict, Any
+from typing import List, Any
 
 import pandas as pd
 import streamlit as st
@@ -46,7 +38,9 @@ with st.sidebar:
         help="Cole aqui sua chave de API do YouTube Data API v3.",
     )
 
-    default_queries = "historias emocionantes, casas abandonadas, padre cícero, desaparecidos, archivos del depredador"
+    default_queries = (
+        "historias emocionantes, casas abandonadas, padre cícero, desaparecidos, archivos del depredador"
+    )
     raw_queries = st.text_area(
         "Palavras‑chave (separadas por vírgula)",
         value=default_queries,
@@ -59,13 +53,13 @@ with st.sidebar:
             "BR", "US", "MX", "ES", "FR", "PL", "IT", "PT", "AR", "CO", "CL",
         ],
         index=0,
-        help="Afeta relevância/idioma dos resultados."
+        help="Afeta relevância/idioma dos resultados.",
     )
 
     published_after = st.date_input(
         "Publicado depois de",
         value=(datetime.utcnow() - timedelta(days=365)).date(),
-        help="Filtra por data de publicação (default: últimos 12 meses)."
+        help="Filtra por data de publicação (default: últimos 12 meses).",
     )
 
     min_views = st.select_slider(
@@ -79,7 +73,7 @@ with st.sidebar:
         min_value=1,
         value=10_000,
         step=500,
-        help="Ex.: 10.000 para achar canais ainda pequenos."
+        help="Ex.: 10.000 para achar canais ainda pequenos.",
     )
 
     max_per_query = st.slider(
@@ -88,11 +82,11 @@ with st.sidebar:
         max_value=200,
         value=100,
         step=20,
-        help="Quantos vídeos coletar por termo (paginação)."
+        help="Quantos vídeos coletar por termo (paginação).",
     )
 
     st.markdown("---")
-    st.caption("Dicas de uso: use 3–8 palavras‑chave por rodada para economizar cota.")
+    st.caption("Dicas: use 3–8 palavras‑chave por rodada para economizar cota.")
 
 # ------------------------- HELPERS -------------------------
 
@@ -102,7 +96,7 @@ def yt_client(api_key: str):
 
 
 def chunked(lst: List[str], size: int) -> List[List[str]]:
-    return [lst[i:i + size] for i in range(0, len(lst), size)]
+    return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
 def safe_int(x: Any, default: int = 0) -> int:
@@ -163,16 +157,18 @@ def get_videos_stats(service, video_ids: List[str]) -> pd.DataFrame:
         for it in res.get("items", []):
             sn = it.get("snippet", {})
             stt = it.get("statistics", {})
-            rows.append({
-                "videoId": it.get("id"),
-                "title": sn.get("title"),
-                "publishedAt": sn.get("publishedAt"),
-                "channelId": sn.get("channelId"),
-                "channelTitle": sn.get("channelTitle"),
-                "views": safe_int(stt.get("viewCount")),
-                "likes": safe_int(stt.get("likeCount")),
-                "comments": safe_int(stt.get("commentCount")),
-            })
+            rows.append(
+                {
+                    "videoId": it.get("id"),
+                    "title": sn.get("title"),
+                    "publishedAt": sn.get("publishedAt"),
+                    "channelId": sn.get("channelId"),
+                    "channelTitle_video": sn.get("channelTitle"),
+                    "views": safe_int(stt.get("viewCount")),
+                    "likes": safe_int(stt.get("likeCount")),
+                    "comments": safe_int(stt.get("commentCount")),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -192,13 +188,15 @@ def get_channels_stats(service, channel_ids: List[str]) -> pd.DataFrame:
         for it in res.get("items", []):
             stt = it.get("statistics", {})
             sn = it.get("snippet", {})
-            rows.append({
-                "channelId": it.get("id"),
-                "channelTitle": sn.get("title"),
-                "subs": safe_int(stt.get("subscriberCount"), -1),
-                "videoCount": safe_int(stt.get("videoCount")),
-                "country": sn.get("country"),
-            })
+            rows.append(
+                {
+                    "channelId": it.get("id"),
+                    "channelTitle_channel": sn.get("title"),
+                    "subs": safe_int(stt.get("subscriberCount"), -1),
+                    "videoCount": safe_int(stt.get("videoCount")),
+                    "country": sn.get("country"),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -219,9 +217,13 @@ if st.button("🚀 Buscar canais agora", type="primary"):
     service = yt_client(api_key)
 
     queries = [q.strip() for q in raw_queries.split(",") if q.strip()]
-    st.write(f"**Consultas:** {', '.join(queries)} | **Região:** {region} | **Min views:** {min_views:,} | **Max subs:** {max_subs:,}")
+    st.write(
+        f"**Consultas:** {', '.join(queries)} | **Região:** {region} | **Min views:** {min_views:,} | **Max subs:** {max_subs:,}"
+    )
 
-    published_after_iso = datetime.combine(published_after, datetime.min.time()).isoformat("T") + "Z"
+    published_after_iso = (
+        datetime.combine(published_after, datetime.min.time()).isoformat("T") + "Z"
+    )
 
     all_video_ids: List[str] = []
     pb = st.progress(0.0, text="Coletando vídeos por termo…")
@@ -235,7 +237,9 @@ if st.button("🚀 Buscar canais agora", type="primary"):
     videos_df = get_videos_stats(service, all_video_ids)
 
     if videos_df.empty:
-        st.warning("Nenhum vídeo encontrado. Tente aumentar o período, mudar as palavras‑chave ou a região.")
+        st.warning(
+            "Nenhum vídeo encontrado. Tente aumentar o período, mudar as palavras‑chave ou a região."
+        )
         st.stop()
 
     # Filtra por views mínimas
@@ -246,15 +250,37 @@ if st.button("🚀 Buscar canais agora", type="primary"):
         st.stop()
 
     # Busca stats dos canais correspondentes
-    unique_channels = sorted(videos_df["channelId"].dropna().unique().tolist())
-    ch_df = get_channels_stats(service, unique_channels)
+    unique_channels = (
+        sorted(videos_df["channelId"].dropna().unique().tolist()) if "channelId" in videos_df.columns else []
+    )
+    ch_df = get_channels_stats(service, unique_channels) if unique_channels else pd.DataFrame()
 
     if ch_df.empty:
         st.warning("Não foi possível obter estatísticas dos canais.")
         st.stop()
 
     # Merge e filtro por inscritos
-    merged = videos_df.merge(ch_df, on=["channelId"], how="left", suffixes=("_video", "_channel"))
+    merged = videos_df.merge(
+        ch_df,
+        on=["channelId"],
+        how="left",
+        suffixes=("_video", "_channel"),
+    )
+
+    # Unificar nome do canal (pós-merge cria channelTitle_video e channelTitle_channel)
+    if "channelTitle_channel" in merged.columns or "channelTitle_video" in merged.columns:
+        merged["channelTitle"] = merged.get("channelTitle_channel")
+        merged["channelTitle"] = merged["channelTitle"].fillna(merged.get("channelTitle_video"))
+    else:
+        # fallback: se só existir 'channelTitle'
+        if "channelTitle" not in merged.columns and "channelTitle_video" in merged.columns:
+            merged["channelTitle"] = merged["channelTitle_video"]
+
+    # Garantir colunas presentes
+    for col, default in [("subs", -1), ("country", None)]:
+        if col not in merged.columns:
+            merged[col] = default
+
     filtered = merged[(merged["subs"] >= 0) & (merged["subs"] <= max_subs)]
 
     if filtered.empty:
@@ -267,28 +293,40 @@ if st.button("🚀 Buscar canais agora", type="primary"):
     filtered = filtered.sort_values(["views", "publishedAt"], ascending=[False, False])
 
     # Agregados por canal (para priorização)
+    cols_group = [
+        c
+        for c in ["channelId", "channelTitle", "subs", "country"]
+        if c in filtered.columns
+    ]
+    if not cols_group:
+        st.info("Não foi possível preparar o resumo por canal (colunas ausentes).")
+        st.stop()
+
     agg = (
-        filtered.groupby(["channelId", "channelTitle", "subs", "country"], dropna=False)
-        .agg(
-            top_video_views=("views", "max"),
-            qty_100k_plus=("videoId", "count"),
-        )
+        filtered.groupby(cols_group, dropna=False)
+        .agg(top_video_views=("views", "max"), qty_100k_plus=("videoId", "count"))
         .reset_index()
         .sort_values(["qty_100k_plus", "top_video_views"], ascending=[False, False])
     )
 
     st.subheader("📈 Prioridade por Canal (resumo)")
-    st.dataframe(
-        agg.assign(
-            channelUrl=agg["channelId"].apply(lambda x: f"https://www.youtube.com/channel/{x}")
-        ),
-        use_container_width=True,
+    df_show = agg.assign(
+        channelUrl=agg["channelId"].apply(lambda x: f"https://www.youtube.com/channel/{x}")
     )
+    st.dataframe(df_show, use_container_width=True)
 
     st.subheader("📋 Vídeos Encontrados (detalhado)")
     cols_show = [
-        "title", "views", "publishedAt", "channelTitle", "subs", "country", "videoUrl", "channelUrl"
+        "title",
+        "views",
+        "publishedAt",
+        "channelTitle",  # coluna unificada
+        "subs",
+        "country",
+        "videoUrl",
+        "channelUrl",
     ]
+    cols_show = [c for c in cols_show if c in filtered.columns]
     st.dataframe(filtered[cols_show], use_container_width=True)
 
     # Download CSVs
@@ -319,6 +357,7 @@ if st.button("🚀 Buscar canais agora", type="primary"):
             - Para escalar, rode em batches ao longo do dia (limite de cota padrão é 10.000 unidades/diárias por projeto).
             """
         )
-
 else:
-    st.info("Preencha a chave de API e as palavras‑chave, depois clique em **Buscar canais agora**.")
+    st.info(
+        "Preencha a chave de API e as palavras‑chave, depois clique em **Buscar canais agora**."
+    )
