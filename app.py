@@ -139,81 +139,9 @@ def parse_duration_minutes(duration_str: str) -> float:
 def get_categories_map(api_key: str, region: str) -> Dict[str, str]:
     """Retorna um dict {categoryId: title} para a região."""
     service = yt_client(api_key)
-    res = _safe_execute(service.videoCategories().list(part="snippet", regionCode=region), "categorias")
-    mapping: Dict[str, str] = {}
-    for it in res.get("items", []):
-        if it.get("kind") == "youtube#videoCategory" and it.get("snippet", {}).get("assignable"):
-            mapping[it.get("id")] = it.get("snippet", {}).get("title")
-    return mapping
-
-
-def search_videos(service, query: str, region: str, published_after_iso: str, limit: int) -> List[str]:
-    video_ids: List[str] = []
-    page_token = None
-    while len(video_ids) < limit:
-        res = _safe_execute(
-            service.search().list(
-                part="id",
-                type="video",
-                order="viewCount",
-                q=query,
-                regionCode=region,
-                publishedAfter=published_after_iso,
-                maxResults=min(50, limit - len(video_ids)),
-                pageToken=page_token,
-                safeSearch="none",
-            ),
-            f"search: '{query}'",
-        )
-        for item in res.get("items", []):
-            vid = item["id"].get("videoId")
-            if vid:
-                video_ids.append(vid)
-        page_token = res.get("nextPageToken")
-        if not page_token:
-            break
-    return video_ids
-
-
-def get_videos_stats(service, video_ids: List[str]) -> pd.DataFrame:
-    rows = []
-    for ids_batch in chunked(video_ids, 50):
-        res = _safe_execute(
-            service.videos().list(part="snippet,statistics,contentDetails", id=",".join(ids_batch), maxResults=50),
-            "videos",
-        )
-        )
-        for it in res.get("items", []):
-            sn = it.get("snippet", {})
-            stt = it.get("statistics", {})
-            cd = it.get("contentDetails", {})
-            th = sn.get("thumbnails", {})
-            thumb = th.get("high", th.get("medium", th.get("default", {}))).get("url")
-            rows.append(
-                {
-                    "videoId": it.get("id"),
-                    "title": sn.get("title"),
-                    "publishedAt": sn.get("publishedAt"),
-                    "channelId": sn.get("channelId"),
-                    "channelTitle_video": sn.get("channelTitle"),
-                    "categoryId": sn.get("categoryId"),
-                    "views": safe_int(stt.get("viewCount")),
-                    "likes": safe_int(stt.get("likeCount")),
-                    "comments": safe_int(stt.get("commentCount")),
-                    "duration_min": parse_duration_minutes(cd.get("duration", "PT0M")),
-                    "thumbnail": thumb,
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def get_channels_stats(service, channel_ids: List[str]) -> pd.DataFrame:
-    rows = []
-    for ids_batch in chunked(channel_ids, 50):
-        res = _safe_execute(
+    res = _safe_execute(
             service.channels().list(part="snippet,statistics", id=",".join(ids_batch), maxResults=50),
             "canais",
-        )
         )
         for it in res.get("items", []):
             sn = it.get("snippet", {})
