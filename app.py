@@ -1,15 +1,7 @@
 """
-YT Prospect Finder — Canais Pequenos com Vídeos Virais (Streamlit)
------------------------------------------------------------------
-- Agora com **seção Em Alta** na tela principal:
-  - Canais **≤ 20.000 inscritos**
-  - Vídeos **≥ 20 minutos**
-  - **≥ 10.000 views nos últimos 7 dias** (proxy: vídeos publicados nos últimos 7 dias com views totais ≥ 10k)
-- Mantém filtros gerais personalizáveis na barra lateral.
-
-Obs.: A API pública do YouTube não retorna views por janela de 7 dias por vídeo (isso é do
-YouTube Analytics e requer OAuth). Usamos um **proxy confiável**: vídeos publicados
-nos **últimos 7 dias** com **views totais ≥ 10k** e que pertençam a **canais ≤ 20k inscritos**.
+O erro TypeError ocorreu porque o campo 'publishedAt' pode conter valores NaT (Not a Time),
+o que quebra a comparação com 'cutoff_7d'. Agora, o código converte a coluna e filtra apenas
+linhas com datas válidas antes de aplicar o filtro de 7 dias.
 """
 
 from datetime import datetime, timedelta
@@ -33,11 +25,9 @@ with st.sidebar:
     region = st.selectbox("Região", ["BR","US","MX","ES","FR","PL","IT","PT","AR","CO","CL"], index=0)
     published_after = st.date_input("Publicado depois de", (datetime.utcnow()-timedelta(days=365)).date())
 
-    # Filtros gerais (para tabela padrão)
     min_views_general = st.select_slider("Mínimo de views (tabela geral)", options=[10_000,50_000,100_000,200_000,500_000,1_000_000], value=200_000)
     max_subs_general = st.number_input("Máx. inscritos (tabela geral)",1,200_000,10_000,500)
     min_duration_general = st.number_input("⏱️ Duração mínima (min) — geral", min_value=0, max_value=180, value=10, step=1)
-
     max_per_query = st.slider("Máx. vídeos por palavra‑chave",20,200,100,20)
 
     st.markdown("---")
@@ -129,7 +119,6 @@ if st.button("🚀 Buscar canais agora",type="primary"):
     queries=[q.strip() for q in raw_queries.split(",") if q.strip()]
     published_after_iso=datetime.combine(published_after,datetime.min.time()).isoformat("T")+"Z"
 
-    # 1) Buscar vídeos por termos
     all_video_ids=[]; pb=st.progress(0.0,text="Buscando vídeos…")
     for i,q in enumerate(queries,start=1):
         vids=search_videos(service,q,region,published_after_iso,max_per_query)
@@ -140,7 +129,6 @@ if st.button("🚀 Buscar canais agora",type="primary"):
     if videos_df.empty:
         st.warning("Nenhum vídeo encontrado."); st.stop()
 
-    # 2) Trazer dados dos canais e unificar dado
     unique_channels=sorted(videos_df["channelId"].dropna().unique().tolist())
     ch_df=get_channels_stats(service,unique_channels)
 
@@ -149,18 +137,20 @@ if st.button("🚀 Buscar canais agora",type="primary"):
     merged=build_links(merged)
     merged["publishedAt"]=pd.to_datetime(merged["publishedAt"],errors="coerce")
 
-    # =================== Seção EM ALTA (topo) ===================
-    NOW_UTC = datetime.utcnow()
-    cutoff_7d = NOW_UTC - timedelta(days=7)
+    # Remover linhas sem data válida antes do filtro de 7 dias
+    merged=merged.dropna(subset=["publishedAt"])
 
-    trending = merged[
-        (merged["subs"] >= 0) & (merged["subs"] <= 20_000) &
-        (merged["duration_min"] >= 20) &
-        (merged["views"] >= 10_000) &
-        (merged["publishedAt"] >= cutoff_7d)
+    NOW_UTC=datetime.utcnow()
+    cutoff_7d=NOW_UTC-timedelta(days=7)
+
+    trending=merged[
+        (merged["subs"]>=0)&(merged["subs"]<=20_000)&
+        (merged["duration_min"]>=20)&
+        (merged["views"]>=10_000)&
+        (merged["publishedAt"]>=cutoff_7d)
     ].copy()
 
-    trending = trending.sort_values(["views","publishedAt"], ascending=[False, False])
+    trending=trending.sort_values(["views","publishedAt"],ascending=[False,False])
 
     st.subheader("🔥 Em Alta (últimos 7 dias)")
     st.caption("Canais ≤ 20k inscritos • Vídeos ≥ 20 min • ≥ 10k views • Publicados nos últimos 7 dias")
@@ -168,39 +158,28 @@ if st.button("🚀 Buscar canais agora",type="primary"):
     if trending.empty:
         st.info("Nenhum vídeo em alta dentro desses critérios nesta busca. Tente outros termos/regiões.")
     else:
-        cols_trend = [
-            "title","views","duration_min","publishedAt","channelTitle","subs","videoUrl","channelUrl"
-        ]
-        cols_trend = [c for c in cols_trend if c in trending.columns]
-        st.dataframe(trending[cols_trend], use_container_width=True)
+        cols_trend=["title","views","duration_min","publishedAt","channelTitle","subs","videoUrl","channelUrl"]
+        st.dataframe(trending[cols_trend],use_container_width=True)
 
     st.markdown("---")
 
-    # =================== Tabela geral (com filtros do usuário) ===================
-    general = merged.copy()
-
-    # Aplicar filtros gerais
-    general = general[(general["views"] >= min_views_general) & (general["duration_min"] >= min_duration_general)]
-    general = general[(general["subs"] >= 0) & (general["subs"] <= max_subs_general)]
+    general=merged.copy()
+    general=general[(general["views"]>=min_views_general)&(general["duration_min"]>=min_duration_general)]
+    general=general[(general["subs"]>=0)&(general["subs"]<=max_subs_general)]
 
     if general.empty:
-        st.warning("Nenhum vídeo atende aos filtros gerais definidos na barra lateral.")
-        st.stop()
+        st.warning("Nenhum vídeo atende aos filtros gerais definidos na barra lateral."); st.stop()
 
-    general = general.sort_values(["views","publishedAt"], ascending=[False, False])
+    general=general.sort_values(["views","publishedAt"],ascending=[False,False])
 
     st.subheader("📋 Vídeos Encontrados (tabela geral)")
-    cols_gen = [
-        "title","views","duration_min","publishedAt","channelTitle","subs","videoUrl","channelUrl"
-    ]
-    cols_gen = [c for c in cols_gen if c in general.columns]
-    st.dataframe(general[cols_gen], use_container_width=True)
+    cols_gen=["title","views","duration_min","publishedAt","channelTitle","subs","videoUrl","channelUrl"]
+    st.dataframe(general[cols_gen],use_container_width=True)
 
-    # Downloads
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    st.download_button("⬇️ CSV — Em Alta (7d)", data=trending[cols_trend].to_csv(index=False) if not trending.empty else "",
-                       file_name=f"yt_trending_7d_{ts}.csv", mime="text/csv", disabled=trending.empty)
-    st.download_button("⬇️ CSV — Tabela Geral", data=general[cols_gen].to_csv(index=False),
-                       file_name=f"yt_general_{ts}.csv", mime="text/csv")
+    ts=datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    st.download_button("⬇️ CSV — Em Alta (7d)",data=trending.to_csv(index=False)if not trending.empty else"",
+                       file_name=f"yt_trending_7d_{ts}.csv",mime="text/csv",disabled=trending.empty)
+    st.download_button("⬇️ CSV — Tabela Geral",data=general.to_csv(index=False),
+                       file_name=f"yt_general_{ts}.csv",mime="text/csv")
 else:
     st.info("Preencha a chave, defina suas palavras‑chave e clique em **Buscar canais agora**.")
