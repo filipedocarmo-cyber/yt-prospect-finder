@@ -22,6 +22,9 @@ from typing import List, Any, Dict
 import pandas as pd
 import streamlit as st
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import time
+import json
 import isodate
 
 # -------------------- Página --------------------
@@ -79,6 +82,40 @@ def yt_client(api_key: str):
     return build("youtube", "v3", developerKey=api_key)
 
 
+def _safe_execute(request, context_label: str, retries: int = 3, backoff: float = 1.5):
+    """Executa uma request da API com tratamento de erros e tentativas."""
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            return request.execute()
+        except HttpError as e:
+            last_err = e
+            try:
+                err_json = json.loads(e.content.decode("utf-8"))
+                reason = (err_json.get("error", {}).get("errors", [{}])[0].get("reason")
+                          or err_json.get("error", {}).get("message"))
+            except Exception:
+                reason = str(e)
+            # Mensagens mais claras por motivo
+            if reason in {"quotaExceeded", "dailyLimitExceeded"}:
+                st.error("⚠️ Quota da YouTube Data API esgotada hoje. Tente novamente mais tarde ou use outra API Key.")
+                st.stop()
+            elif reason in {"keyInvalid", "forbidden", "ipRefererBlocked"}:
+                st.error("🔑 API Key inválida ou restrita (HTTP 403). Verifique se a **YouTube Data API v3** está habilitada e se a chave permite este uso.")
+                st.stop()
+            elif reason in {"badRequest"}:
+                st.error(f"❗ Requisição inválida ao buscar {context_label}. Verifique os parâmetros.")
+                st.stop()
+            # Backoff para erros temporários
+            time.sleep(backoff ** attempt)
+        except Exception as e:
+            last_err = e
+            time.sleep(backoff ** attempt)
+    # Se chegou aqui, falhou
+    st.error(f"Erro ao chamar a API para {context_label}: {last_err}")
+    st.stop()
+
+
 def chunked(lst: List[str], size: int) -> List[List[str]]:
     return [lst[i : i + size] for i in range(0, len(lst), size)]
 
@@ -102,7 +139,7 @@ def parse_duration_minutes(duration_str: str) -> float:
 def get_categories_map(api_key: str, region: str) -> Dict[str, str]:
     """Retorna um dict {categoryId: title} para a região."""
     service = yt_client(api_key)
-    res = service.videoCategories().list(part="snippet", regionCode=region).execute()
+    res = _safe_execute(service.videoCategories().list(part="snippet", regionCode=region), "categorias")
     mapping: Dict[str, str] = {}
     for it in res.get("items", []):
         if it.get("kind") == "youtube#videoCategory" and it.get("snippet", {}).get("assignable"):
@@ -114,9 +151,8 @@ def search_videos(service, query: str, region: str, published_after_iso: str, li
     video_ids: List[str] = []
     page_token = None
     while len(video_ids) < limit:
-        res = (
-            service.search()
-            .list(
+        res = _safe_execute(
+            service.search().list(
                 part="id",
                 type="video",
                 order="viewCount",
@@ -126,8 +162,8 @@ def search_videos(service, query: str, region: str, published_after_iso: str, li
                 maxResults=min(50, limit - len(video_ids)),
                 pageToken=page_token,
                 safeSearch="none",
-            )
-            .execute()
+            ),
+            f"search: '{query}'",
         )
         for item in res.get("items", []):
             vid = item["id"].get("videoId")
@@ -142,10 +178,10 @@ def search_videos(service, query: str, region: str, published_after_iso: str, li
 def get_videos_stats(service, video_ids: List[str]) -> pd.DataFrame:
     rows = []
     for ids_batch in chunked(video_ids, 50):
-        res = (
-            service.videos()
-            .list(part="snippet,statistics,contentDetails", id=",".join(ids_batch), maxResults=50)
-            .execute()
+        res = _safe_execute(
+            service.videos().list(part="snippet,statistics,contentDetails", id=",".join(ids_batch), maxResults=50),
+            "videos",
+        )
         )
         for it in res.get("items", []):
             sn = it.get("snippet", {})
@@ -174,10 +210,10 @@ def get_videos_stats(service, video_ids: List[str]) -> pd.DataFrame:
 def get_channels_stats(service, channel_ids: List[str]) -> pd.DataFrame:
     rows = []
     for ids_batch in chunked(channel_ids, 50):
-        res = (
-            service.channels()
-            .list(part="snippet,statistics", id=",".join(ids_batch), maxResults=50)
-            .execute()
+        res = _safe_execute(
+            service.channels().list(part="snippet,statistics", id=",".join(ids_batch), maxResults=50),
+            "canais",
+        )
         )
         for it in res.get("items", []):
             sn = it.get("snippet", {})
